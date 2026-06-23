@@ -251,7 +251,7 @@ async function collect(id){
   try{ const r = await api(`/api/groups/${id}/collect`,{method:'POST'}); toast(r.message); renderDetail(await api('/api/groups/'+id)); }catch(e){ toast(e.message); }
 }
 async function payout(id){
-  if(!confirm('Release this turn\\'s pot to the recipient and send the transfer?')) return;
+   if(!confirm("Release this turn's pot to the recipient and send the transfer?")) return;
   try{ const r = await api(`/api/groups/${id}/payout`,{method:'POST'}); toast('Turn '+r.paid_cycle+' — '+(r.message||'paid out')); renderDetail(await api('/api/groups/'+id)); }catch(e){ toast(e.message); }
 }
 /* ---------- disbursement (Paystack Transfers) ---------- */
