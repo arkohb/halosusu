@@ -47,7 +47,7 @@ const CSP = [
   "default-src 'self'", "base-uri 'self'", "object-src 'none'", "frame-ancestors 'self'", "form-action 'self'",
   "img-src 'self' data:",
   "script-src 'self' 'unsafe-inline' https://js.paystack.co",
-  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  "style-src 'self' 'unsafe-inline' https://paystack.com",
   "font-src 'self' https://fonts.gstatic.com",
   "connect-src 'self' https://api.paystack.co",
   "frame-src https://checkout.paystack.com https://*.paystack.co",
