@@ -45,12 +45,12 @@ const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || "").split(",").map((s) =
 const MAX_BODY = 512 * 1024; // cap request bodies at 512 KB (anti-DoS)
 const CSP = [
   "default-src 'self'", "base-uri 'self'", "object-src 'none'", "frame-ancestors 'self'", "form-action 'self'",
-  "img-src 'self' data:",
-  "script-src 'self' 'unsafe-inline' https://js.paystack.co",
-  "style-src 'self' 'unsafe-inline' https://paystack.com",
-  "font-src 'self' https://fonts.gstatic.com",
-  "connect-src 'self' https://api.paystack.co",
-  "frame-src https://checkout.paystack.com https://*.paystack.co",
+  "img-src 'self' data: https:",
+  "script-src 'self' 'unsafe-inline' https://js.paystack.co https://paystack.com https://*.paystack.com https://*.paystack.co",
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://paystack.com https://*.paystack.com",
+  "font-src 'self' https://fonts.gstatic.com https://paystack.com https://*.paystack.com",
+  "connect-src 'self' https://api.paystack.co https://paystack.com https://*.paystack.com https://*.paystack.co",
+  "frame-src https://paystack.com https://*.paystack.com https://*.paystack.co",
 ].join("; ");
 
 if (NODE_ENV === "production" && (AUTH_SECRET === "change-me-susu-secret" || AUTH_SECRET.length < 16)) {
