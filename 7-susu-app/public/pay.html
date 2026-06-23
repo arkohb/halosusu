@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HaloSusu — Pay your contribution</title>
+<link rel="stylesheet" href="app.css">
+<script src="https://js.paystack.co/v1/inline.js"></script>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="theme-color" content="#171410">
+  <link rel="icon" href="/icons/favicon-32.png" sizes="32x32" type="image/png">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="HaloSusu">
+</head>
+<body>
+<header class="bar">
+  <div class="brand">Halo<span>Susu</span></div>
+</header>
+
+<div class="wrap" style="max-width:480px">
+  <div id="card" class="card center">
+    <p class="muted">Loading…</p>
+  </div>
+  <p class="center small muted" style="margin-top:1rem">Payments are processed securely by Paystack (MoMo or card).</p>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+<script>
+const t = new URLSearchParams(location.search).get('t');
+const api = (path, opts={}) => fetch(path,opts).then(async r=>{
+  const d = await r.json().catch(()=>({})); if(!r.ok) throw new Error(d.error||'error'); return d; });
+function toast(m){const el=document.getElementById('toast');el.textContent=m;el.classList.remove('hidden');
+  clearTimeout(el._h);el._h=setTimeout(()=>el.classList.add('hidden'),3800);}
+const fmt = (m,c='GHS') => (c==='GHS'?'₵':c+' ')+(Number(m||0)/100).toLocaleString();
+const esc = s => String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let INFO=null;
+
+async function load(){
+  if(!t){ document.getElementById('card').innerHTML='<p class="bad">Missing payment link.</p>'; return; }
+  try{ INFO = await api('/api/member/'+encodeURIComponent(t)); render(); }
+  catch(e){ document.getElementById('card').innerHTML=`<p style="color:var(--bad)">${esc(e.message)}</p>`; }
+}
+function render(){
+  const g = INFO.group, c = INFO.cycle, due = INFO.due;
+  let body = `<h2 style="margin-top:0">${esc(g.name)}</h2>
+    <p class="muted small">Hello ${esc(INFO.member.name)}</p>`;
+  if(INFO.you){
+    body += INFO.you.received
+      ? `<div class="card" style="background:rgba(31,122,77,.1);border-color:rgba(31,122,77,.3);text-align:left"><strong style="color:var(--k-green)">You've received your turn</strong> <span class="small muted">(turn ${INFO.you.turn})</span></div>`
+      : `<div class="note" style="text-align:left">Your turn to receive the pot: <strong>turn ${INFO.you.turn} of ${INFO.you.of}</strong>${INFO.you.due_date?` · around ${INFO.you.due_date}`:''}</div>`;
+  }
+  if(g.status!=='active'){
+    body += `<div class="note" style="margin-top:.6rem">This susu isn't collecting yet. Check back when your admin starts it.</div>`;
+  } else if(!due){
+    body += `<div class="note">Nothing is due from you right now.</div>`;
+  } else if(due.status==='locked' || due.status==='released'){
+    body += `<div class="card" style="background:rgba(31,122,77,.1);border-color:rgba(31,122,77,.3);margin-top:.6rem">
+      <strong style="color:var(--k-green)">✓ Paid for turn ${c.idx}</strong>
+      <div class="small muted">Thank you — your contribution is locked in.</div></div>`;
+  } else {
+    body += `
+      <div class="grid" style="margin-top:.8rem;text-align:left">
+        <div class="row" style="justify-content:space-between"><span class="muted">Turn</span><span>${c.idx} of ${c.of}</span></div>
+        <div class="row" style="justify-content:space-between"><span class="muted">This turn pays</span><span>${esc(c.recipient||'—')}</span></div>
+        <div class="row" style="justify-content:space-between"><span class="muted">Your contribution</span><strong>${fmt(due.amount_minor, INFO.currency)}</strong></div>
+        <div class="row" style="justify-content:space-between"><span class="muted">Due by</span><span>${c.due_date||''}</span></div>
+      </div>
+      <label style="text-align:left">Your email (for the receipt)</label>
+      <input id="email" type="email" placeholder="you@email.com" value="${esc(INFO.email||'')}">
+      <div style="margin-top:.9rem"><button class="btn" style="width:100%" onclick="pay()">Pay ${fmt(due.amount_minor, INFO.currency)} now</button></div>`;
+  }
+  document.getElementById('card').innerHTML = body;
+}
+async function pay(){
+  const email = (document.getElementById('email')||{}).value || '';
+  if(!email){ toast('Enter an email for your receipt'); return; }
+  try{
+    const init = await api('/api/member/'+encodeURIComponent(t)+'/pay-init',{method:'POST',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({email})});
+    const pop = PaystackPop.setup({
+      key: init.publicKey, email, amount: init.amount_minor, currency: init.currency||'GHS',
+      ref: init.reference, channels:['mobile_money','card'],
+      onSuccess: async ()=>{ try{ await api('/api/pay/verify',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({reference:init.reference})}); toast('Payment confirmed'); load(); }
+        catch(e){ toast('Paid — confirming shortly'); setTimeout(load,2500); } },
+      onCancel: ()=>toast('Payment cancelled')
+    });
+    pop.openIframe();
+  }catch(e){ toast(e.message); }
+}
+load();
+</script>
+<script>
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", function () { navigator.serviceWorker.register("/sw.js").catch(function(){}); });
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HaloSusu — My groups</title>
+<link rel="stylesheet" href="app.css">
+<script src="https://js.paystack.co/v1/inline.js"></script>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="theme-color" content="#171410">
+  <link rel="icon" href="/icons/favicon-32.png" sizes="32x32" type="image/png">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="HaloSusu">
+</head>
+<body>
+<header class="bar">
+  <div class="brand">Halo<span>Susu</span></div>
+  <span class="who" id="who"></span>
+  <div class="spacer"></div>
+  <button class="btn ghost sm" style="color:#fdf6e6;border-color:#4a443a" onclick="logout()">Sign out</button>
+</header>
+
+<div class="wrap">
+  <!-- choose a plan (shown when no tier yet) -->
+  <div id="planGate" class="card hidden">
+    <h2>Choose a plan to start</h2>
+    <p class="small muted">Pay by MoMo or card. Your plan sets how many groups you can run and
+      how many members each can have.</p>
+    <div id="planTiers" class="grid cols-3" style="margin-top:.6rem"></div>
+  </div>
+
+  <!-- list view -->
+  <div id="listView" class="hidden">
+    <div class="row" style="justify-content:space-between">
+      <h2>My groups</h2>
+      <button class="btn" onclick="toggleNew()">+ New group</button>
+    </div>
+    <div id="limits" class="small muted"></div>
+
+    <div id="newGroup" class="card hidden" style="margin:.7rem 0">
+      <div class="grid cols-2">
+        <div><label>Group name</label><input id="g_name" placeholder="Market Women Susu"></div>
+        <div><label>Contribution per turn (₵)</label><input id="g_amount" type="number" min="1" placeholder="200"></div>
+        <div><label>Frequency</label><select id="g_freq"><option value="weekly">Weekly</option><option value="biweekly">Every 2 weeks</option><option value="monthly" selected>Monthly</option></select></div>
+        <div><label>Payout order</label><select id="g_rot"><option value="join_order">Order members were added</option><option value="random">Random draw</option></select></div>
+      </div>
+      <div style="margin-top:.8rem"><button class="btn green" onclick="createGroup()">Create group</button></div>
+    </div>
+
+    <div id="groupList" class="grid cols-2" style="margin-top:.6rem"></div>
+  </div>
+
+  <!-- detail view -->
+  <div id="detailView" class="hidden">
+    <button class="btn ghost sm" onclick="backToList()">← All groups</button>
+    <div id="detail"></div>
+  </div>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+<script>
+const token = localStorage.getItem('susu_token');
+const H = { 'Authorization':'Bearer '+token, 'Content-Type':'application/json' };
+const api = (path, opts={}) => fetch(path,{...opts,headers:{...H,...(opts.headers||{})}}).then(async r=>{
+  const d = await r.json().catch(()=>({})); if(!r.ok) throw new Error(d.error||'error'); return d; });
+function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.remove('hidden');
+  clearTimeout(t._h);t._h=setTimeout(()=>t.classList.add('hidden'),3800);}
+function logout(){ localStorage.removeItem('susu_token'); location.href='/'; }
+const fmt = m => '₵'+(Number(m||0)/100).toLocaleString();
+const esc = s => String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let ME=null;
+
+async function guard(){
+  if(!token){ location.href='/'; return false; }
+  try{ ME = await api('/api/me'); }catch{ location.href='/'; return false; }
+  if(ME.role!=='group'){ location.href='/'; return false; }
+  if(ME.status!=='active'){ document.body.innerHTML='<div class="wrap"><div class="note">Your account is awaiting super-admin approval.</div></div>'; return false; }
+  document.getElementById('who').textContent = ME.name + (ME.tier?(' · '+ME.tier+' plan'):'');
+  return true;
+}
+
+/* ---------- plan gate ---------- */
+async function maybeGate(){
+  if(ME.groups_allowed>0){ document.getElementById('listView').classList.remove('hidden'); loadGroups(); return; }
+  const {tiers} = await api('/api/tiers');
+  document.getElementById('planGate').classList.remove('hidden');
+  document.getElementById('planTiers').innerHTML = tiers.map(t=>`
+    <div class="card">
+      <div class="row" style="justify-content:space-between"><strong>${t.name}</strong>
+        <span class="pill locked">${t.price_minor?fmt(t.price_minor):'Free'}</span></div>
+      <div class="small muted" style="margin:.3rem 0">${esc(t.blurb||'')}</div>
+      <div class="small">${t.max_groups} group(s) · up to ${t.max_members} members</div>
+      <div style="margin-top:.7rem"><button class="btn" onclick="pickTier(${t.id},${t.price_minor})">Choose ${esc(t.name)}</button></div>
+    </div>`).join('');
+}
+async function pickTier(id, price){
+  try{
+    const r = await api('/api/tiers/subscribe',{method:'POST',body:JSON.stringify({tier_id:id})});
+    if(r.free){ toast('Plan activated'); location.reload(); return; }
+    payWithPaystack(r, async ()=>{ await api('/api/pay/verify',{method:'POST',body:JSON.stringify({reference:r.reference})}); toast('Plan activated'); location.reload(); });
+  }catch(e){ toast(e.message); }
+}
+function payWithPaystack(init, onDone){
+  const pop = PaystackPop.setup({
+    key: init.publicKey, email: init.email || 'admin@halosusu.app',
+    amount: init.amount_minor, currency: init.currency||'GHS', ref: init.reference,
+    channels:['mobile_money','card'],
+    onSuccess: onDone, onCancel: ()=>toast('Payment cancelled')
+  });
+  pop.openIframe();
+}
+
+/* ---------- groups ---------- */
+function toggleNew(){ document.getElementById('newGroup').classList.toggle('hidden'); }
+async function loadGroups(){
+  const {groups, limits} = await api('/api/groups');
+  document.getElementById('limits').textContent =
+    `Using ${limits.groups_used} of ${limits.groups_allowed} active group(s) · up to ${limits.members_per_group} members each`;
+  document.getElementById('groupList').innerHTML = groups.length ? groups.map(g=>`
+    <div class="card" style="cursor:pointer" onclick="openGroup(${g.id})">
+      <div class="row" style="justify-content:space-between">
+        <strong>${esc(g.name)}</strong><span class="pill ${g.status}">${g.status}</span></div>
+      <div class="small muted" style="margin-top:.3rem">${fmt(g.contribution_minor)} / ${g.frequency} · ${g.members} members</div>
+      ${g.status==='active'?`<div class="small" style="margin-top:.3rem">Turn ${g.current_cycle} of ${g.num_cycles}</div>`:''}
+    </div>`).join('') : '<p class="muted">No groups yet. Create your first one.</p>';
+}
+async function createGroup(){
+  try{
+    await api('/api/groups',{method:'POST',body:JSON.stringify({
+      name:g_name.value, contribution:g_amount.value, frequency:g_freq.value, rotation:g_rot.value })});
+    toast('Group created'); g_name.value=''; g_amount.value=''; toggleNew(); loadGroups();
+  }catch(e){ toast(e.message); }
+}
+
+/* ---------- group detail ---------- */
+function backToList(){ document.getElementById('detailView').classList.add('hidden');
+  document.getElementById('listView').classList.remove('hidden'); loadGroups(); }
+async function openGroup(id){
+  document.getElementById('listView').classList.add('hidden');
+  document.getElementById('detailView').classList.remove('hidden');
+  renderDetail(await api('/api/groups/'+id));
+}
+function renderDetail(d){
+  const g = d.group, origin = location.origin;
+  const isDraft = g.status==='draft', isActive = g.status==='active';
+  const memberRows = d.members.map(m=>`
+    <tr>
+      <td>${m.position?('#'+m.position+'  '):''}<strong>${esc(m.name)}</strong>
+        ${m.auto_charge?'<span class="pill locked" title="auto-charge enabled">auto</span>':''}
+        <span class="pill ${m.payout_ready?'released':'due'}" title="disbursement method">${m.payout_ready?'payout set':'no payout'}</span>
+        <div class="small muted">${esc(m.phone||'')}</div>
+        <div class="linkbox" style="margin-top:.3rem">${origin}/pay?t=${m.pay_token}
+          <button class="btn ghost sm" style="margin-left:.4rem" onclick="copyLink('${origin}/pay?t=${m.pay_token}')">Copy</button></div>
+        <div style="margin-top:.35rem"><button class="btn ghost sm" onclick="togglePayout(${m.id})">${m.payout_ready?'Update':'Set'} payout method</button></div>
+        <div id="pm_${m.id}" class="hidden" style="margin-top:.4rem">
+          <div class="row">
+            <select id="pm_prov_${m.id}" style="flex:1.4">${providerOptions(m.payout_provider)}</select>
+            <input id="pm_acct_${m.id}" placeholder="MoMo / account no." value="${esc(m.payout_account||m.phone||'')}" style="flex:1.3">
+          </div>
+          <input id="pm_name_${m.id}" placeholder="Account name" value="${esc(m.name)}" style="margin-top:.3rem">
+          <div style="margin-top:.4rem"><button class="btn sm green" onclick="savePayout(${g.id},${m.id})">Save method</button></div>
+        </div>
+      </td>
+      <td class="center">${isDraft?`<button class="btn red sm" onclick="delMember(${g.id},${m.id})">Remove</button>`:''}</td>
+    </tr>`).join('');
+
+  const cycleRows = d.cycles.map(c=>{
+    const cur = c.idx===g.current_cycle && isActive;
+    const fundbar = `${c.locked}/${c.total} paid`;
+    return `<tr style="${cur?'background:var(--accent-soft)':''}">
+      <td>${c.idx}${cur?' ◀ current':''}</td>
+      <td><strong>${esc(c.recipient_name)}</strong></td>
+      <td>${fmt(c.pot_minor)}</td>
+      <td><span class="pill ${c.status==='paid_out'?'released':(c.locked===c.total?'locked':'due')}">${c.status==='paid_out'?'paid out':(c.locked===c.total?'funded':fundbar)}</span></td>
+      <td class="small muted">${c.due_date||''}</td>
+    </tr>`;
+  }).join('');
+
+  const current = d.cycles.find(c=>c.idx===g.current_cycle);
+  const fundedNow = current && current.locked===current.total && current.status!=='paid_out';
+  const outstanding = current ? current.due_members : [];
+
+  document.getElementById('detail').innerHTML = `
+    <div class="row" style="justify-content:space-between;margin-top:.6rem">
+      <h2 style="margin:0">${esc(g.name)}</h2><span class="pill ${g.status}">${g.status}</span></div>
+    <div class="small muted">${fmt(g.contribution_minor)} per turn · ${g.frequency} · payout order: ${g.rotation==='random'?'random draw':'order added'}</div>
+
+    <div class="grid cols-2" style="margin-top:1rem">
+      <div class="card">
+        <div class="row" style="justify-content:space-between"><h3 style="margin:0">Members</h3>
+          <span class="small muted">${d.members.length} of ${ME.members_per_group}</span></div>
+        ${isDraft?`<div class="row" style="margin:.6rem 0">
+          <input id="m_name" placeholder="Member name" style="flex:2">
+          <input id="m_phone" placeholder="Phone" style="flex:1.4">
+          <button class="btn sm" onclick="addMember(${g.id})">Add</button></div>`:''}
+        <table><tbody>${memberRows||'<tr><td class="muted">No members yet</td></tr>'}</tbody></table>
+        ${isDraft?`<div class="divider"></div>
+          <button class="btn green" onclick="startGroup(${g.id})" ${d.members.length<2?'disabled':''}>Start susu (${d.members.length} members)</button>
+          <div class="small muted" style="margin-top:.3rem">Starting locks the member list and builds the rotation.</div>
+          <button class="btn red sm" style="margin-top:.6rem" onclick="deleteGroup(${g.id})">Delete this group</button>`:''}
+      </div>
+
+      <div class="card">
+        <h3 style="margin-top:0">Rotation</h3>
+        ${g.status==='draft'?'<p class="muted small">Turns appear once you start the susu.</p>':`
+          <table><thead><tr><th>Turn</th><th>Receives</th><th>Pot</th><th>Status</th><th>Due</th></tr></thead>
+          <tbody>${cycleRows}</tbody></table>`}
+        ${isActive?`
+          <div class="divider"></div>
+          ${outstanding.length?`<div class="note">Waiting on: ${outstanding.map(o=>esc(o.name)+(o.status==='defaulted'?' (failed)':'')).join(', ')}</div>`:''}
+          <div class="row" style="margin-top:.6rem">
+            <button class="btn ghost" onclick="collect(${g.id})">Auto-charge unpaid</button>
+            <button class="btn green" onclick="payout(${g.id})" ${fundedNow?'':'disabled'}>Pay out turn ${g.current_cycle}</button>
+          </div>
+          <div class="small muted" style="margin-top:.3rem">Pay out is enabled once every member's contribution for this turn is locked.</div>`:''}
+        ${g.status==='completed'?'<div class="note" style="margin-top:.7rem">This susu has completed — everyone has received their turn.</div>':''}
+      </div>
+    </div>
+
+    ${d.payouts.length?`<div class="card" style="margin-top:.9rem"><h3 style="margin-top:0">Payout history</h3>
+      <table><thead><tr><th>Turn</th><th>Recipient</th><th>Amount</th><th>Transfer</th><th></th></tr></thead><tbody>
+      ${d.payouts.map((p,i)=>`<tr>
+        <td>${i+1}</td><td>${esc(p.recipient_name)}</td><td><strong>${fmt(p.amount_minor)}</strong></td>
+        <td><span class="pill ${transferPill(p.transfer_status)}">${transferLabel(p.transfer_status)}</span></td>
+        <td>${p.transfer_status!=='success'?`<button class="btn ghost sm" onclick="sendTransfer(${g.id},${p.id})">Send payout</button>`:''}</td>
+      </tr>`).join('')}
+      </tbody></table>
+      <div class="small muted" style="margin-top:.4rem">Transfers draw from your settled Paystack balance. Disable Transfers OTP in Paystack to send automatically.</div></div>`:''}
+  `;
+}
+function copyLink(u){ navigator.clipboard.writeText(u).then(()=>toast('Link copied')); }
+async function addMember(id){
+  try{ const r = await api(`/api/groups/${id}/members`,{method:'POST',body:JSON.stringify({name:m_name.value,phone:m_phone.value})});
+    toast('Member added'); renderDetail(await api('/api/groups/'+id)); }catch(e){ toast(e.message); }
+}
+async function delMember(gid,mid){
+  try{ await api(`/api/groups/${gid}/members/${mid}`,{method:'DELETE'}); renderDetail(await api('/api/groups/'+gid)); }catch(e){ toast(e.message); }
+}
+async function startGroup(id){
+  if(!confirm('Start the susu? Members can no longer be changed.')) return;
+  try{ await api(`/api/groups/${id}/start`,{method:'POST'}); toast('Susu started'); renderDetail(await api('/api/groups/'+id)); }catch(e){ toast(e.message); }
+}
+async function deleteGroup(id){
+  if(!confirm('Delete this draft group? This cannot be undone.')) return;
+  try{ await api('/api/groups/'+id,{method:'DELETE'}); toast('Group deleted'); backToList(); }catch(e){ toast(e.message); }
+}
+async function collect(id){
+  try{ const r = await api(`/api/groups/${id}/collect`,{method:'POST'}); toast(r.message); renderDetail(await api('/api/groups/'+id)); }catch(e){ toast(e.message); }
+}
+async function payout(id){
+  if(!confirm('Release this turn\\'s pot to the recipient and send the transfer?')) return;
+  try{ const r = await api(`/api/groups/${id}/payout`,{method:'POST'}); toast('Turn '+r.paid_cycle+' — '+(r.message||'paid out')); renderDetail(await api('/api/groups/'+id)); }catch(e){ toast(e.message); }
+}
+/* ---------- disbursement (Paystack Transfers) ---------- */
+let PROVIDERS=[];
+async function loadProviders(){ try{ PROVIDERS=(await api('/api/momo-providers')).providers||[]; }catch{ PROVIDERS=[]; } }
+function providerOptions(sel){
+  if(!PROVIDERS.length) return '<option value="">— set Paystack keys —</option>';
+  return ['<option value="">Provider…</option>'].concat(
+    PROVIDERS.map(p=>`<option value="${esc(p.code)}" ${p.code===sel?'selected':''}>${esc(p.name)}</option>`)).join('');
+}
+function togglePayout(mid){ document.getElementById('pm_'+mid).classList.toggle('hidden'); }
+async function savePayout(gid,mid){
+  const provider=(document.getElementById('pm_prov_'+mid)||{}).value||'';
+  const account=(document.getElementById('pm_acct_'+mid)||{}).value||'';
+  const name=(document.getElementById('pm_name_'+mid)||{}).value||'';
+  if(!provider||!account){ toast('Pick a provider and enter the number'); return; }
+  try{ await api(`/api/groups/${gid}/members/${mid}/payout-method`,{method:'POST',
+      body:JSON.stringify({provider,account,name})}); toast('Payout method saved'); renderDetail(await api('/api/groups/'+gid)); }
+  catch(e){ toast(e.message); }
+}
+async function sendTransfer(gid,pid){
+  try{ const r=await api(`/api/groups/${gid}/payouts/${pid}/transfer`,{method:'POST'}); toast(r.message||'Transfer attempted'); renderDetail(await api('/api/groups/'+gid)); }
+  catch(e){ toast(e.message); }
+}
+function transferPill(s){ return {success:'released',pending:'locked',otp_required:'due',no_method:'due',failed:'defaulted',reversed:'defaulted'}[s]||'due'; }
+function transferLabel(s){ return {success:'sent',pending:'processing',otp_required:'needs OTP',no_method:'no method',failed:'failed',reversed:'reversed'}[s]||'pending'; }
+
+(async()=>{ if(await guard()){ loadProviders(); maybeGate(); } })();
+</script>
+<script>
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", function () { navigator.serviceWorker.register("/sw.js").catch(function(){}); });
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HaloSusu — Super Admin</title>
+<link rel="stylesheet" href="app.css">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="theme-color" content="#171410">
+  <link rel="icon" href="/icons/favicon-32.png" sizes="32x32" type="image/png">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="HaloSusu">
+</head>
+<body>
+<header class="bar">
+  <div class="brand">Halo<span>Susu</span></div>
+  <span class="who">Super admin console</span>
+  <div class="spacer"></div>
+  <button class="btn ghost sm" style="color:#fdf6e6;border-color:#4a443a" onclick="logout()">Sign out</button>
+</header>
+
+<div class="wrap" id="app" class="hidden">
+  <div class="grid cols-3" id="stats"></div>
+
+  <h2 style="margin-top:1.4rem">Group admins</h2>
+  <div class="tabs">
+    <div class="tab on" data-f="all" onclick="setFilter('all')">All</div>
+    <div class="tab" data-f="pending" onclick="setFilter('pending')">Pending</div>
+    <div class="tab" data-f="active" onclick="setFilter('active')">Active</div>
+    <div class="tab" data-f="suspended" onclick="setFilter('suspended')">Suspended</div>
+  </div>
+  <div class="card" style="padding:.4rem .6rem">
+    <table><thead><tr><th>Name</th><th>Email / phone</th><th>Tier</th><th>Groups</th><th>Status</th><th></th></tr></thead>
+    <tbody id="rows"></tbody></table>
+  </div>
+
+  <h2 style="margin-top:1.4rem">Plans (tiers)</h2>
+  <p class="small muted">Edit pricing and limits. Changes apply to new subscribers and to admins already on the plan.</p>
+  <div id="tiers" class="grid cols-3" style="margin-top:.4rem"></div>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+<script>
+const token = localStorage.getItem('susu_token');
+const H = { 'Authorization':'Bearer '+token, 'Content-Type':'application/json' };
+const api = (path, opts={}) => fetch(path,{...opts,headers:{...H,...(opts.headers||{})}}).then(async r=>{
+  const d = await r.json().catch(()=>({})); if(!r.ok) throw new Error(d.error||'error'); return d; });
+function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.remove('hidden');
+  clearTimeout(t._h);t._h=setTimeout(()=>t.classList.add('hidden'),3500);}
+function logout(){ localStorage.removeItem('susu_token'); location.href='/'; }
+const fmt = m => '₵'+(m/100).toLocaleString();
+let DATA = {admins:[]}, FILTER='all';
+
+async function guard(){
+  if(!token){ location.href='/'; return false; }
+  try{ const me = await api('/api/me'); if(me.role!=='super'){ location.href='/'; return false; } return true; }
+  catch{ location.href='/'; return false; }
+}
+function setFilter(f){ FILTER=f; document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('on',t.dataset.f===f)); renderRows(); }
+
+async function load(){
+  const d = await api('/api/super/overview'); DATA=d;
+  const c = d.counts;
+  document.getElementById('stats').innerHTML = `
+    <div class="stat"><div class="k">Pending approvals</div><div class="v" style="color:var(--accent)">${c.pending}</div></div>
+    <div class="stat"><div class="k">Active admins</div><div class="v">${c.active_admins}</div></div>
+    <div class="stat"><div class="k">Groups</div><div class="v">${c.groups}</div></div>
+    <div class="stat"><div class="k">Members</div><div class="v">${c.members}</div></div>
+    <div class="stat"><div class="k">Locked (held)</div><div class="v" style="color:var(--k-green)">${fmt(c.locked_minor)}</div></div>
+    <div class="stat"><div class="k">Paid out</div><div class="v">${fmt(c.paid_out_minor)}</div></div>`;
+  renderRows();
+}
+function renderRows(){
+  const list = DATA.admins.filter(a=>FILTER==='all'?true:a.status===FILTER);
+  document.getElementById('rows').innerHTML = list.length ? list.map(a=>`
+    <tr>
+      <td><strong>${esc(a.name)}</strong><div class="small muted">${a.created_at}</div></td>
+      <td>${esc(a.email)}<div class="small muted">${esc(a.phone||'')}</div></td>
+      <td>${a.tier||'—'}</td>
+      <td>${a.groups}</td>
+      <td><span class="pill ${a.status}">${a.status}</span></td>
+      <td class="row" style="gap:.35rem">${actions(a)}</td>
+    </tr>`).join('') : '<tr><td colspan="6" class="center muted" style="padding:1.2rem">No admins here.</td></tr>';
+}
+function actions(a){
+  if(a.status==='pending') return `<button class="btn green sm" onclick="act(${a.id},'approve')">Approve</button>
+    <button class="btn red sm" onclick="act(${a.id},'reject')">Reject</button>`;
+  if(a.status==='active') return `<button class="btn red sm" onclick="act(${a.id},'suspend')">Suspend</button>`;
+  if(a.status==='suspended') return `<button class="btn green sm" onclick="act(${a.id},'unsuspend')">Reinstate</button>`;
+  return '';
+}
+async function act(id, action){
+  if(action==='reject' && !confirm('Reject and delete this registration?')) return;
+  try{ await api(`/api/super/admins/${id}/${action}`,{method:'POST'}); toast('Done'); load(); }
+  catch(e){ toast(e.message); }
+}
+const esc = s => String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+async function loadTiers(){
+  const {tiers} = await api('/api/tiers');
+  document.getElementById('tiers').innerHTML = tiers.map(t=>`
+    <div class="card">
+      <strong>${esc(t.name)}</strong>
+      <label>Price (₵)</label><input id="t_price_${t.id}" type="number" min="0" step="1" value="${t.price_minor/100}">
+      <label>Max groups</label><input id="t_g_${t.id}" type="number" min="1" value="${t.max_groups}">
+      <label>Max members / group</label><input id="t_m_${t.id}" type="number" min="1" value="${t.max_members}">
+      <label>Blurb</label><input id="t_b_${t.id}" value="${esc(t.blurb||'')}">
+      <div style="margin-top:.6rem"><button class="btn sm" onclick="saveTier(${t.id})">Save plan</button></div>
+    </div>`).join('');
+}
+async function saveTier(id){
+  try{
+    await api('/api/super/tiers',{method:'POST',body:JSON.stringify({
+      id,
+      price: document.getElementById('t_price_'+id).value,
+      max_groups: document.getElementById('t_g_'+id).value,
+      max_members: document.getElementById('t_m_'+id).value,
+      blurb: document.getElementById('t_b_'+id).value })});
+    toast('Plan updated'); loadTiers();
+  }catch(e){ toast(e.message); }
+}
+
+(async()=>{ if(await guard()){ document.getElementById('app').classList.remove('hidden'); load(); loadTiers(); } })();
+</script>
+<script>
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", function () { navigator.serviceWorker.register("/sw.js").catch(function(){}); });
+}
+</script>
+</body>
+</html>

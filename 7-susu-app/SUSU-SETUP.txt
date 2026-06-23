@@ -1,0 +1,204 @@
+HaloSusu — setup, deploy & how it works
+=======================================
+
+WHAT THIS IS
+A group rotating-savings (susu / ajo) web app, themed to match HaloMart.
+Three roles:
+  • Super admin  — controls the site; approves/verifies group admins.
+  • Group admin  — registers, gets approved, buys a tier, creates groups,
+                   adds members, runs the rotation. Only group admins register.
+  • Member       — added strictly by a group admin; never logs in. They pay
+                   their contribution through a private link by MoMo or card.
+
+The pot auto-rotates: with N members there are N turns; each turn one member
+receives the whole pot, until everyone has received once, then the group is
+"completed".
+
+--------------------------------------------------------------------
+PLEASE READ — MONEY & COMPLIANCE
+--------------------------------------------------------------------
+This software is a LEDGER + COLLECTION engine. It records who has paid,
+marks contributions "locked" (collected) and "released" (paid into a turn),
+and can auto-charge members who already received their turn so they can't
+walk away (the anti-default feature, via saved Paystack authorizations).
+
+What software alone CANNOT do: legally hold a float of other people's money
+and pay it out. In Ghana/Nigeria that is a regulated activity. Before you run
+real money through this at scale:
+  - Settle funds into a dedicated account, ideally via a licensed PSP / escrow
+    partner, not a personal wallet.
+  - Pay-outs to recipients ARE now sent automatically by Paystack Transfer
+    (see DISBURSEMENT below). You still need a Paystack account approved for
+    transfers and a settled balance to cover them.
+  - Get basic legal/regulatory advice. Treat the "locked" balance as a
+    liability you owe members.
+Build the trust features on top of a compliant money rail — don't let the
+app be the bank.
+
+--------------------------------------------------------------------
+STACK
+--------------------------------------------------------------------
+Node 22.5+ only (built-in node:sqlite, no npm install needed). Paystack for
+MoMo/card. One server serves both the API and the web pages, so it deploys
+as a single Railway service (like the order-server).
+
+FILES
+  server.js            backend + serves the pages
+  package.json
+  public/index.html    landing + group-admin login/registration + plans
+  public/super.html    super-admin console
+  public/admin.html    group-admin dashboard
+  public/pay.html      member contribution page (opened via private link)
+  public/app.css       shared HaloMart theme
+
+--------------------------------------------------------------------
+ENVIRONMENT VARIABLES (set in Railway)
+--------------------------------------------------------------------
+  PAYSTACK_SECRET_KEY     sk_live_... (or sk_test_... to start)
+  PAYSTACK_PUBLIC_KEY     pk_live_... (or pk_test_...)
+  AUTH_SECRET             any long random string (signs login tokens)
+  SUPER_ADMIN_EMAIL       e.g. you@yourdomain.com
+  SUPER_ADMIN_PASSWORD    a strong password you choose
+  CURRENCY                GHS (default) or NGN
+  PORT                    set automatically by Railway
+  RAILWAY_VOLUME_MOUNT_PATH  attach a Volume so susu.db survives restarts
+
+  -- notifications (all optional; without them, messages are logged not sent) --
+  RESEND_API_KEY          email (free key at resend.com)
+  MAIL_FROM               verified sender, e.g. "HaloSusu <susu@yourdomain.com>"
+  ARKESEL_API_KEY         SMS for Ghana (arkesel.com); members get texts
+  SMS_SENDER              approved Arkesel sender ID (<=11 chars), e.g. HaloSusu
+  APP_URL                 your public URL, e.g. https://halosusu.up.railway.app
+                          (used to build pay links inside messages; if unset the
+                          server falls back to the request host)
+
+If you don't set SUPER_ADMIN_EMAIL/PASSWORD, the server creates a super admin
+on first boot and PRINTS the email + a random password in the Railway logs.
+Set the env vars so you control the login.
+
+--------------------------------------------------------------------
+DEPLOY (single path)
+--------------------------------------------------------------------
+1. Put this 7-susu-app folder in its own GitHub repo (or a subfolder Railway
+   points at). Railway -> New Project -> Deploy from repo.
+2. Add a Volume and set RAILWAY_VOLUME_MOUNT_PATH to its mount path so the
+   database persists.
+3. Add the environment variables above.
+4. Deploy. Open https://YOUR-APP.up.railway.app/health -> should be {"ok":true}.
+5. In the Paystack dashboard, set the webhook URL to:
+       https://YOUR-APP.up.railway.app/paystack/webhook
+   (This confirms payments server-to-server even if a browser drops off.)
+
+--------------------------------------------------------------------
+FIRST RUN
+--------------------------------------------------------------------
+1. Go to /super and sign in with your super-admin email/password.
+2. A group admin registers at / (the landing page) -> they appear under
+   "Pending" in your super console -> Approve them.
+3. The group admin signs in at /, picks a plan (Starter is free), then:
+     - creates a group (name, contribution per turn, frequency, payout order),
+     - adds members (name + phone),
+     - clicks "Start susu" (locks the member list, builds the rotation).
+4. The admin copies each member's pay link and shares it (WhatsApp etc).
+5. Members open their link, pay by MoMo or card. Each paid contribution is
+   "locked". When every member has paid the current turn, the admin clicks
+   "Pay out turn N" — the pot is released to that turn's recipient and the
+   rotation advances. Repeat until completed.
+
+ANTI-DEFAULT (auto-charge)
+After a member pays once, Paystack gives us a saved authorization. On later
+turns the admin can click "Auto-charge unpaid" to charge those saved methods
+automatically, so someone who already collected their pot can't quietly stop
+contributing. Members with no saved method are flagged so the admin can chase
+them. (Requires your Paystack account to allow recurring charges.)
+
+--------------------------------------------------------------------
+DISBURSEMENT — automatic payout to recipients (Paystack Transfers)
+--------------------------------------------------------------------
+Each member can have a payout method (MoMo provider + number, or bank account
+for NGN). In the group dashboard, click "Set payout method" on a member; the
+provider list loads from Paystack and the details are saved as a Paystack
+transfer recipient.
+
+When you click "Pay out turn N":
+  1. the turn's contributions are released in the ledger, then
+  2. the app initiates a Paystack Transfer of the full pot to that turn's
+     recipient and shows the result.
+
+Transfer states you may see: sent (success), processing (pending), needs OTP,
+no method, failed. "Send payout" lets you retry any non-sent transfer (e.g.
+after you add a member's payout method). Final success/failure is also updated
+from Paystack's transfer.success / transfer.failed webhooks.
+
+IMPORTANT for automatic transfers:
+  - In your Paystack dashboard, turn OFF "OTP for transfers" (Settings ->
+    Preferences/Transfers). Otherwise each transfer needs an OTP and the app
+    will report "needs OTP".
+  - Transfers draw from your Paystack BALANCE, which fills as contributions
+    settle (Paystack settlement is usually next-day, not instant). Keep enough
+    balance to cover a pot, or pay out after settlement.
+  - Your Paystack account must be enabled for Transfers (you may need to
+    request this from Paystack for a new account).
+
+--------------------------------------------------------------------
+NOTIFICATIONS (SMS + email)
+--------------------------------------------------------------------
+Members are automatically messaged at the moments that matter:
+  - when a group admin ADDS them: a welcome with their private pay link,
+  - when the susu STARTS and at the start of EACH new turn: "your ₵X
+    contribution is due, <name> receives this turn", with the pay link,
+  - when they RECEIVE their turn: "it's your turn, ₵X is being sent to you".
+SMS goes to the member's phone (Ghana numbers auto-formatted to 233...),
+email goes to members who have an email. Set ARKESEL_API_KEY (+ SMS_SENDER)
+for SMS and RESEND_API_KEY (+ MAIL_FROM) for email. Without keys, messages
+are printed to the Railway logs instead of sent, so you can wire keys later.
+Arkesel sender IDs must be approved by Arkesel before SMS will deliver.
+
+--------------------------------------------------------------------
+EDITING PLANS (super admin)
+--------------------------------------------------------------------
+On /super there's a "Plans (tiers)" section. Edit each plan's price, max
+groups, max members and blurb, then Save. Changes apply to new subscribers
+AND immediately to admins already on that plan.
+
+--------------------------------------------------------------------
+TIERS (group/member limits)
+--------------------------------------------------------------------
+Seeded defaults (edit in code or via the super "tiers" endpoint):
+  Starter  free      1 group    10 members/group
+  Growth   GHS 100   5 groups   30 members/group
+  Pro      GHS 300   20 groups  100 members/group
+A group admin pays for a tier by MoMo/card; on success their limits are raised.
+
+--------------------------------------------------------------------
+INSTALL AS AN APP (PWA)
+--------------------------------------------------------------------
+HaloSusu is installable. On Android Chrome, group admins (and you) get an
+"Install app" prompt; on iPhone Safari use Share -> "Add to Home Screen".
+Installed, it opens fullscreen with the HaloSusu icon. The service worker
+caches the app shell so pages still open offline — but it never caches the
+API or Paystack, so logins, payments and live data always hit the network.
+When you change the app, bump the version in public/sw.js (halosusu-v1 ->
+v2) and redeploy so installed apps refresh.
+
+--------------------------------------------------------------------
+LOCAL TEST
+--------------------------------------------------------------------
+  cd 7-susu-app
+  PORT=5599 AUTH_SECRET=dev SUPER_ADMIN_EMAIL=you@dev SUPER_ADMIN_PASSWORD=dev123 \
+    PAYSTACK_PUBLIC_KEY=pk_test_xxx PAYSTACK_SECRET_KEY=sk_test_xxx node server.js
+  open http://localhost:5599/
+
+ASSUMPTIONS MADE (change to taste)
+  - Members are records, not accounts (they only ever pay via a link).
+  - One turn = one member receives; N members => N turns.
+  - Every payment is amount-verified server-side against what's owed, so a
+    member can't underpay their way to "paid" and an admin can't underpay a tier.
+  - Completed susus do NOT count against your active-group limit; a group that
+    hasn't started yet can be deleted to free a slot.
+  - Members see their own payout turn and rough date on their pay page.
+  - Login sessions expire after 30 days.
+  - "weekly / every 2 weeks / monthly" only sets the displayed due dates;
+    it does not auto-charge on a schedule — the admin triggers each turn.
+  - Payout releases the turn in the ledger AND sends a Paystack Transfer to
+    the recipient's saved payout method (retry available if it isn't set yet).

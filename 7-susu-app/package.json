@@ -1,0 +1,13 @@
+{
+  "name": "halosusu-app",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "HaloSusu — group rotating-savings (susu/ajo) platform with super admin, group admins, tiers, fund-locking and auto-rotation.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  }
+}

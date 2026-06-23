@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HaloSusu — group savings, made simple</title>
+<link rel="stylesheet" href="app.css">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="theme-color" content="#171410">
+  <link rel="icon" href="/icons/favicon-32.png" sizes="32x32" type="image/png">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="HaloSusu">
+</head>
+<body>
+<header class="bar">
+  <div class="brand">Halo<span>Susu</span></div>
+  <div class="spacer"></div>
+  <a href="/super" class="who" style="color:#fdf6e6">Super admin</a>
+</header>
+
+<div class="wrap">
+  <div class="card center" style="background:var(--dark);color:#fdf6e6;border:none">
+    <h1 style="color:var(--k-gold)">Run a trusted susu, end to end</h1>
+    <p class="muted" style="color:#e9ddc4;max-width:560px;margin:.4rem auto 0">
+      Create groups, add members, collect contributions by MoMo or card, and let the
+      pot rotate automatically — turn by turn — until everyone has been paid.
+    </p>
+  </div>
+
+  <div class="grid cols-2" style="margin-top:1rem">
+    <!-- LOGIN / SIGNUP -->
+    <div class="card">
+      <div class="tabs">
+        <div class="tab on" id="tabLogin" onclick="showTab('login')">Sign in</div>
+        <div class="tab" id="tabSignup" onclick="showTab('signup')">Register as group admin</div>
+      </div>
+
+      <div id="loginForm">
+        <label>Email</label><input id="li_email" type="email" placeholder="you@email.com">
+        <label>Password</label><input id="li_pass" type="password" placeholder="••••••••">
+        <div style="margin-top:.9rem"><button class="btn" onclick="login()">Sign in</button></div>
+      </div>
+
+      <div id="signupForm" class="hidden">
+        <p class="small muted">Only group admins register here. Your account is reviewed and
+          approved by a super admin before you can start a group.</p>
+        <label>Full name</label><input id="su_name" placeholder="Ama Mensah">
+        <label>Email</label><input id="su_email" type="email" placeholder="you@email.com">
+        <label>Phone (MoMo)</label><input id="su_phone" placeholder="024 000 0000">
+        <label>Password</label><input id="su_pass" type="password" placeholder="at least 6 characters">
+        <div style="margin-top:.9rem"><button class="btn green" onclick="signup()">Create account</button></div>
+      </div>
+    </div>
+
+    <!-- TIERS -->
+    <div class="card">
+      <h3>Plans</h3>
+      <p class="small muted">Pick a plan after you're approved. Higher tiers let you run more
+        groups with more members.</p>
+      <div id="tiers" class="grid" style="margin-top:.6rem"></div>
+    </div>
+  </div>
+
+  <p class="center small muted" style="margin-top:1.4rem">
+    Members don't sign in — a group admin adds them and shares a private pay link.
+  </p>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+<script>
+const api = (path, opts={}) => fetch(path, opts).then(async r => {
+  const d = await r.json().catch(()=>({})); if(!r.ok) throw new Error(d.error||'error'); return d; });
+function toast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.remove('hidden');
+  clearTimeout(t._h); t._h=setTimeout(()=>t.classList.add('hidden'),3500); }
+function showTab(which){
+  document.getElementById('loginForm').classList.toggle('hidden', which!=='login');
+  document.getElementById('signupForm').classList.toggle('hidden', which!=='signup');
+  document.getElementById('tabLogin').classList.toggle('on', which==='login');
+  document.getElementById('tabSignup').classList.toggle('on', which==='signup');
+}
+const fmt = (m,c='GHS') => (c==='GHS'?'₵':c+' ') + (m/100).toLocaleString();
+
+async function loadTiers(){
+  const {tiers} = await api('/api/tiers');
+  document.getElementById('tiers').innerHTML = tiers.map(t=>`
+    <div class="card" style="padding:.8rem">
+      <div class="row" style="justify-content:space-between">
+        <strong>${t.name}</strong>
+        <span class="pill locked">${t.price_minor?fmt(t.price_minor):'Free'}</span>
+      </div>
+      <div class="small muted" style="margin-top:.3rem">${t.blurb||''}</div>
+      <div class="small" style="margin-top:.4rem">${t.max_groups} group(s) · up to ${t.max_members} members each</div>
+    </div>`).join('');
+}
+loadTiers();
+
+async function signup(){
+  try{
+    const body = JSON.stringify({ name:su_name.value, email:su_email.value, phone:su_phone.value, password:su_pass.value });
+    const r = await api('/api/admin/signup',{method:'POST',headers:{'Content-Type':'application/json'},body});
+    toast(r.message||'Registered — awaiting approval'); showTab('login');
+  }catch(e){ toast(e.message); }
+}
+async function login(){
+  try{
+    const body = JSON.stringify({ email:li_email.value, password:li_pass.value });
+    const r = await api('/api/admin/login',{method:'POST',headers:{'Content-Type':'application/json'},body});
+    localStorage.setItem('susu_token', r.token);
+    if(r.role==='super'){ location.href='/super'; return; }
+    if(r.pending){ toast('Your account is awaiting super-admin approval.'); return; }
+    location.href='/admin';
+  }catch(e){ toast(e.message); }
+}
+</script>
+<script>
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", function () { navigator.serviceWorker.register("/sw.js").catch(function(){}); });
+}
+</script>
+</body>
+</html>
